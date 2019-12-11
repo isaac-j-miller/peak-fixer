@@ -23,7 +23,7 @@ par_template={'molec_num':{'type':'int16',
               'wavenumber':{'type':'float64',
                            'start': 3,
                            'width': 12},
-              'intensity':{'type':'float32',
+              'intensity':{'type':'float64',
                            'start': 15,
                            'width': 10},
               'einstein_a':{'type':'float16',
@@ -168,6 +168,21 @@ def specific_gauss(x, y, stdev, maximum, mean, x_min, x_max):
     else:
         return y
 
+
+def reject_greater(x, thresh):
+    if x > thresh:
+        return 0
+    if x < thresh*-1:
+        return 0
+    return x
+
+
+def reject_lesser(x,thresh):
+    if x < thresh:
+        return thresh
+    return x
+
+
 class Spectrum(object):
     def __init__(self, name = None):
         if name is not None and name not in spectra:
@@ -185,7 +200,7 @@ class Spectrum(object):
         self.min=0
         self.max=0
 
-    def select_data_from_file(self, file_path=None, headers=None, silenced=False, overwrite=True):
+    def select_data_from_file(self, file_path=None, headers=None, silenced=False, overwrite=True, id_mods=None):
         print(dt.now().time(), 'loading...')
         if not silenced:
             root.deiconify()
@@ -218,20 +233,27 @@ class Spectrum(object):
                 success = False
 
         elif filetype == '.par':
-            try:
+            #try:
 
-                file = open(file_path,'r')
-                data = file.readlines()
-                file.close()
-                to_pd = [{item: line[par_template[item]['start']:par_template[item]['start']+par_template[item]['width']] for item in par_template} for line in data]
+            file = open(file_path,'r')
+            data = file.readlines()
+            file.close()
+            to_pd = [{item: line[par_template[item]['start']:par_template[item]['start']+par_template[item]['width']] for item in par_template} for line in data]
+            self.cols.append('iso_num')
+            dtypes = {item: par_template[item]['type'] for item in self.cols}
+            self._data = pd.DataFrame.from_dict(to_pd)[self.cols]
+            test=self._data.intensity
+            if id_mods is not None:
+                isonum=self._data.iso_num.astype(int)
+                self._data['mods'] = isonum.map(id_mods).astype('float64')
+                self._data['intensity']=self._data.mods*self._data.intensity.astype(par_template['intensity']['type'])
+            test2 = self._data.intensity
+            self.cols.remove('iso_num')
+            del to_pd, data, file
+            success = True
 
-                dtypes = {item: par_template[item]['type'] for item in self.cols}
-                self._data = pd.DataFrame.from_dict(to_pd)[self.cols]
-                del to_pd, data, file
-                success = True
-
-            except:
-                success = False
+            #except:
+                #success = False
         else:
             success = False
 
@@ -248,7 +270,7 @@ class Spectrum(object):
             if not silenced:
                 messagebox.showerror('Error', msg)
             else:
-                print(dt.now().time(),msg)
+                print(dt.now().time(), msg)
         else:
             msg = 'The operation has been cancelled. No data has been saved to '+self.name+' spectrum.'
             if not silenced:
@@ -278,38 +300,18 @@ class Spectrum(object):
 
     def normalize_spectrum(self, min_ = 0.0, max_ = 1.0):
         print(dt.now().time(), 'normalizing',self.name,'...')
-        data = self.get_data()
-        min_max_scalar = pp.MinMaxScaler(feature_range=(min_,max_))
-        np_scaled = min_max_scalar.fit_transform(data)
-        del min_max_scalar
-        temp = pd.DataFrame(np_scaled,columns=self.cols)
-        del np_scaled
-        normalized = data
-        del data
-        normalized['intensity'] = temp['intensity']
-        del temp
-        self._data = normalized
-        del normalized
-        return self._data
+
+        self._data.intensity =\
+            (self._data.intensity-self._data.intensity.min())/(self._data.intensity.max() - self._data.intensity.min())\
+            * (max_ - min_) + min_
+        return self.get_data()
 
     def trim(self, min_, max_):
+        print(dt.now().time(), 'trimming', self.name,'to (', min_,',',max_, ')...')
         data = self.get_data()
-        print(dt.now().time(), 'trimming', self.name, '...')
-        divisor = 1
-        done = False
-        while not done:
-            print(dt.now().time(), 'divisor is',divisor)
-            try:
-                chunks = chunker(data,divisor)
-                inputs = [chunk[(chunk.wavenumber > min_) & (chunk.wavenumber < max_)] for chunk in chunks]
-                fname = saver(inputs)
-                self.select_data_from_file(fname, True, True, False)
-                self.min, self.max = self._data.min(0)['wavenumber'], self._data.max(0)['wavenumber']
-                return self._data
-            except MemoryError:
-                print(dt.now().time(), 'failed. increasing divisor')
-                divisor += 1
-            # self._data = data
+        self._data=data[(data.wavenumber>min_) & (data.wavenumber<max_)]
+        print(self._data.wavenumber.min(),self._data.wavenumber.max())
+        return self._data
 
     def get_length(self):
         return len(self.get_data())
@@ -323,8 +325,16 @@ class Spectrum(object):
         self.peak_list = data
         return data
 
-    def identify_greater_than_baseline(self, baseline=.01):
-        self.normalize_spectrum()
+    def determine_baseline(self):
+        # TODO: improve fit under peaks
+        print(dt.now().time(), 'determining', self.name, 'baseline...')
+        intensity = self._data.intensity
+        intensity = intensity.apply(reject_greater,args=[0.08])
+        #intensity = intensity.interpolate(method='polynomial',order=3)
+        return intensity.rolling(15000)
+
+    def identify_greater_than_baseline(self):
+        baseline = self.determine_baseline().mean()
         greaters = self.get_data()
         greaters = greaters[greaters['intensity'] > baseline]
         return greaters
@@ -426,10 +436,11 @@ class Spectrum(object):
     def calibrate(self, factor):
         self._data.wavenumber *= factor
 
-    def plot(self, num_points=None):
+    def plot(self, num_points=None, show_baseline=False):
         if num_points is None:
             num_points = len(self.get_data())
         smaller = self.get_downsampled_instance(num_points)
+
         fig = plt.figure()
         axis = fig.add_subplot(111)
         axis.set_xlabel('cm^-1')
@@ -437,6 +448,9 @@ class Spectrum(object):
         axis.set_title(self.name)
         try:
             axis.plot(smaller['wavenumber'], smaller['intensity'])
+            if show_baseline:
+                axis.plot(self._data['wavenumber'], self.determine_baseline().mean())
+
         except MemoryError:
             print(dt.now().time(), 'unable to plot. not enough memory. try spectrum.plot(n) where n is smaller than before.')
         return fig
@@ -534,62 +548,54 @@ class SpectrumPair(object):
         return None
 
     def simple_remove_secondary(self, scale = 1.0, peak_width = 0.08, intensity_threshold=0.001):
-        peak_width_2 =peak_width/2
+
         print(dt.now().time(), 'normalizing...')
         self.primary.normalize_spectrum()
         print(dt.now().time(), 'trimming...')
         self.secondary.trim(self.min, self.max)
-        self.secondary.normalize_spectrum(0, scale)
+        self.secondary.normalize_spectrum()
         print(dt.now().time(), 'finding peaks...')
-        #pri_peaks = self.primary.get_peak_tuples2()
         data = self.primary.get_data()
 
-        #data['d1'] = data.intensity.diff()
-        #data['d2'] = data.d1.diff()
-        zero_thresh = 1E-6
-        neg_zth = zero_thresh*-1
-        #minima = data[(data.d1 <= zero_thresh) & (data.d1 >= neg_zth) & (data.d2 > 0)]
         secPeaks = self.secondary.get_data()
         secPeaks = secPeaks[secPeaks.intensity>intensity_threshold]
-        peaksRemoved = 0
-        #print(minima.head(10), len(minima))
-        print(secPeaks.head(10), len(secPeaks))
+        secPeaks = secPeaks[['wavenumber','intensity']]
+        print('peaks detected: ', len(secPeaks))
         print(dt.now().time(), 'removing peaks...')
-        """
-        for i in range(len(minima)-1):
-            if len(secPeaks):
-                low = minima.wavenumber.iloc[i]
-                li = minima.index[i]
-                high = minima.wavenumber.iloc[i + 1]
-                hi = minima.index[i + 1]
-                #  print(low, high)
-                try:
-                    peak = secPeaks[(secPeaks.wavenumber >= low) & (secPeaks.wavenumber <= high)].wavenumber.values[0]
-                    #TODO: Look for first peak in secPeaks in criteria then remove others up to high
-                    secPeaks = secPeaks[secPeaks.wavenumber > high]
-                    print(low, high, peak)
-                    data.intensity[(data.index >= li) & (data.index <= hi)] *= (1 - scale)
-                    peaksRemoved += 1
-                except IndexError:
-                    break
-            else:
-                break
-        """
 
-        backup = data.intensity.copy()
         std = peak_width/2
-        for index,row in secPeaks.iterrows():
+        base = self.primary.determine_baseline()
+        baseline = base.mean()
+        basestd=base.std()
+        noise = pd.Series(np.random.normal(baseline,basestd/5.0),data.index)
 
-            gauss_data = data.copy()[(data.wavenumber >= row['wavenumber']-peak_width) & (data.wavenumber <= row['wavenumber']+peak_width)]
-            gauss_data['intensity']=gauss_data.apply(df_gauss, axis=1,args=(std,row['intensity']*scale, row['wavenumber']))
-            print('peak:',row['wavenumber'])
-            print(gauss_data)
-            data.intensity-=gauss_data.intensity
-            #data.intensity.subtract(gauss_data.intensity)
-            data.intensity=data.intensity.fillna(backup)
-            peaksRemoved+=1
-        print(dt.now().time(), 'peaks removed:',peaksRemoved)
+        arrPeaks = list(np.asarray(secPeaks).transpose((1, 0)))
+
+        print(dt.now().time(), 'preparing to generate gaussians...')
+        gauss_peaks_locations = [data.copy()[(data.wavenumber >= wavenumber - peak_width) & (
+                    data.wavenumber <= wavenumber + peak_width)] for wavenumber, intensity in zip(*arrPeaks)]
+        print(dt.now().time(), 'generating gaussians...')
+        gauss_peaks_intensity = [gauss.apply(df_gauss, axis=1, args=(std, intensity * scale, wavenumber))
+                                 for gauss, wavenumber, intensity in zip(gauss_peaks_locations, *arrPeaks)]
+        print(dt.now().time(), 'processing gaussians...')
+        total_intensity = pd.concat(gauss_peaks_intensity).sort_index().groupby(level=0).sum()
+        print(dt.now().time(), 'subtracting gaussians...')
+        backup = data.intensity.copy()
+        data.intensity -= total_intensity
+        data.intensity = data.intensity.fillna(backup)
+
+        data.intensity[data.intensity < noise] = noise
         self.primary.set_data_from_spectrum(data)
+        base = self.primary.determine_baseline()
+        baseline = base.mean()
+        minbaseline = baseline.dropna().index.min()
+        data.intensity -= baseline
+        data.intensity[data.intensity < noise] = noise
+        data.intensity[data.intensity > 1] = noise
+        data = data[data.index > minbaseline]
+        self.primary.set_data_from_spectrum(data)
+
+        #self.primary.normalize_spectrum(0,1)
 
     def subtract_spectrum(self, scale=1):
         print(dt.now().time(), 'beginning subtraction...')
@@ -642,8 +648,16 @@ class SpectrumPair(object):
 
         # TODO: plot combined spectrum
 
-    def save_spectrum(self):
-        pass
+    def save_spectrum(self, file_path=None, silenced = True):
+        if file_path is None:
+            if not silenced:
+                root.deiconify()
+            file_path = filedialog.asksaveasfilename(title='Save As')
+
+        extension=file_path[file_path.rfind('.'):]
+        if extension =='.dpt':
+            self.primary.get_data().to_csv(file_path,sep='\t',columns=self.primary.cols, index=False, header=False)
+
         # TODO: select which to save
         # TODO: select filetype from list
         # TODO: input filename
@@ -654,26 +668,39 @@ gc.enable()
 root = Tk()
 root.withdraw()
 # temporary stuff
-path = 'F:/Isaac/peak_fixer/'
+path = './'
 test = Spectrum('test')
 #test.select_data_from_file(path+'GA_0.031torr_72M_10X_600LPF_337.95K_02-09-19_11.12_Emission back parallel input_Si Bolometer [External Pos.5]_0.000960_80 kHz_6 micron Mylar_BEB_AVG201.dpt',False,True)
-test.select_data_from_file(path+'CUTDVA_Av2_w_BKG500.csv',False,True)
+isotope_mods = {
+    1: 1,
+    2: 1,
+    3: 1,
+    4: 1e5,
+    5: 1e5,
+    6: 1e5,
+    7: 1e5
+}
+
+test.select_data_from_file(path+'high-DVA_Av2_w_BKG500_cal.dpt',False,True)
+real = Spectrum('simulation')
+real.select_data_from_file(path+'syn-DVA.dpt', False,True)
 water = Spectrum('water')
-water.select_data_from_file(path+'5d262e45.par', silenced=True)
-test.trim(100, 585)
+water.select_data_from_file(path+'5df03339.par', silenced=True, id_mods=isotope_mods)
+water2=water
+test.trim(90, 600)
+real.trim(90, 600)
 water.trim(test.min, test.max)
 test.normalize_spectrum()
 water.normalize_spectrum()
+real.normalize_spectrum()
 pair = SpectrumPair(test, water, 'Combined Spectrum')
 
+pair.plot()
+real.plot()
 
-# pair.remove_secondary(2.33)
-# water.plot()
-# print(dt.now().time(), water.detect_peak(202.9, .1))
-# pair.interpolate_spectra()
-# pair.subtract_spectrum()
+mag, width, thresh = 1e6, 0.04, 0.0
+pair.simple_remove_secondary(mag, width, thresh)
+title='./spectrum_mag{}_width{}_thresh{}.dpt'.format(mag, width, thresh)
+print('saving spectrum as', title)
+pair.save_spectrum(title)
 pair.plot()
-pair.simple_remove_secondary(3.0,0.08, 0.001)
-pair.plot()
-# print(dt.now().time(), done)
-# print(dt.now().time(), 'duplicates:', len(test.get_data())+len(water.get_data())-len(unique))
