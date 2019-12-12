@@ -4,12 +4,14 @@ import random
 import string
 import math
 from datetime import datetime as dt
-# import copy
 from tkinter import Tk, filedialog, messagebox
-
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+
+gc.enable()
+root = Tk()
+root.withdraw()
 
 spectra = []
 
@@ -81,45 +83,6 @@ def randomString(stringLength=10):
     return ''.join(random.choice(letters) for i in range(stringLength))
 
 
-def fast_interleave_overlay(df1, df2):
-    print(dt.now().time(),'interleaving...')
-    # divisor = 1
-    # done = False
-    print(dt.now().time(),'assembling xlist and dropping duplicates')
-    output = pd.DataFrame(columns=['wavenumber', 'intensity'])
-    output['wavenumber'] = df1['wavenumber'].append(df2['wavenumber']).drop_duplicates(inplace=False).sort_values(kind = 'quicksort')
-    print(dt.now().time(),'dropped',len(df1)+len(df2)-len(output),'duplicates')
-    # df2.loc[:, 'intensity'] = np.nan
-    output['wavenumber'] = np.nan
-    # here, output is the common freq axis. df1 is the primary dataframe, df2 is a dataframe with blank values
-    print(dt.now().time(),'adding secondary dataframe intensities...')
-    output['intensity'] = df2[df2['wavenumber']==output['wavenumber']]['intensity']
-    del df2
-    print(dt.now().time(),'adding primary dataframe intensities...')
-    output['intensity'] = df1[df1['wavenumber']==output['wavenumber']]['intensity']
-    del df1
-    return output
-    # while not done:
-    #     chunks1 = chunker(df1, divisor)
-    #     chunks2 = chunker(df2, divisor)
-    #     if len(chunks1) == len(chunks2):
-    #         print(dt.now().time(),dt.now().time(),'divisor is ', divisor)
-    #         try:
-    #             inputs = [chunks1[i].append(chunks2[i]).drop_duplicates(inplace=False, subset = 'wavenumber') for i in range(len(chunks1))]
-    #             name = saver(inputs)
-    #             done = True
-    #         except:
-    #             print(dt.now().time(),dt.now().time(),'failure. increasing divisor')
-    #             divisor += 1
-    #     else:
-    #         print(dt.now().time(),dt.now().time(),'unequal size')
-    #         raise('SizeError: Unequal arrays')
-    # del chunks1,chunks2,df1,df2
-
-    # print(dt.now().time(),dt.now().time(),'sorting...')
-    # return retrieve_from_saver(name)
-
-
 def chunker(df,divisor):
     print(dt.now().time(),'chunking...')
     length = len(df)
@@ -146,13 +109,6 @@ def retrieve_from_saver(fname):
     return data
 
 
-def within_percent_of(x,y,percent):
-    if abs((x-y)/np.average([x,y]))*100 <=percent:
-        return True
-    else:
-        return False
-
-
 def gauss(x, stdev, maximum, mean):
     return maximum*math.exp((-1*(x-mean)**2)/(2*stdev**2))
 
@@ -161,24 +117,11 @@ def df_gauss(row, stdev, maximum, mean):
     return gauss(row['wavenumber'], stdev, maximum, mean)
 
 
-def specific_gauss(x, y, stdev, maximum, mean, x_min, x_max):
-    if x_min < x < x_max:
-        return gauss(x, stdev, maximum, mean)
-    else:
-        return y
-
-
 def reject_greater(x, thresh):
     if x > thresh:
         return 0
     if x < thresh*-1:
         return 0
-    return x
-
-
-def reject_lesser(x,thresh):
-    if x < thresh:
-        return thresh
     return x
 
 
@@ -461,7 +404,7 @@ class Spectrum(object):
             file_path = filedialog.asksaveasfilename(title='Save As')
 
         extension=file_path[file_path.rfind('.'):]
-        if extension =='.dpt':
+        if extension == '.dpt':
             self.get_data().to_csv(file_path,sep='\t',columns=self.cols, index=False, header=False)
 
 
@@ -536,7 +479,7 @@ class SpectrumPair(object):
 
         #self.primary.normalize_spectrum(0,1)
 
-    def plot(self,num_points = None):
+    def plot(self, num_points=None):
         if self.combined is not None:
             self.combined.plot(num_points)
         self.primary.plot(num_points)
@@ -549,59 +492,3 @@ class SpectrumPair(object):
     def save_spectrum(self, file_path=None, silenced = True):
         self.primary.save_spectrum(file_path,silenced)
 
-
-gc.enable()
-root = Tk()
-root.withdraw()
-# temporary stuff
-if __name__ == '__main__':
-    path = './'
-    test = Spectrum('test')
-    isotope_mods = {
-        1: 1,
-        2: 1,
-        3: 1,
-        4: 1e4,
-        5: 1e4,
-        6: 1e4,
-        7: 1e4
-    }
-    isotope_mods_hcl = {
-        1: 1,
-        2: 1,
-        3: 1e4,
-        4: 1e4,
-    }
-    test.select_data_from_file(path+'high-DVA_Av2_w_BKG500_cal.dpt',False,True)
-    real = Spectrum('simulation')
-    real.select_data_from_file(path+'syn-DVA.dpt', False,True)
-    water = Spectrum('water')
-    water.select_data_from_file(path+'5df03339.par', silenced=True, id_mods=isotope_mods)
-    hcl = Spectrum('HCl-DCl')
-    hcl.select_data_from_file(path+'hcldcl.par', silenced=True, id_mods=isotope_mods_hcl)
-    hcl.trim(90, 600)
-    water2 = water
-    test.trim(90, 600)
-    real.trim(90, 600)
-    water.trim(test.min, test.max)
-    hcl.normalize_spectrum()
-    test.normalize_spectrum()
-    water.normalize_spectrum()
-    real.normalize_spectrum()
-    pair = SpectrumPair(test, water, 'Combined Spectrum')
-
-    pair.plot()
-    real.plot()
-
-    mag, width, thresh = 1e4, 0.035, 1e-10
-    hclmag, hclwidth = 5e2, 0.02
-    pair.remove_secondary(mag, width, thresh)
-    pair2 = SpectrumPair(pair.primary, hcl, 'HCl-DCl Included')
-    pair2.remove_secondary(hclmag, width, thresh)
-    title = './spectrum_mag{}_width{}_thresh{}.dpt'.format(mag, width, thresh)
-    title2 = './spectrum_rem_hcl_dcl_mag{}_width{}_water_mag{}_width{}_thresh{}.dpt'.format(hclmag, mag, hclwidth, width, thresh)
-    print('saving spectrum as', title)
-    pair.save_spectrum(title)
-    pair2.save_spectrum(title2)
-    pair.plot()
-    pair2.plot()
