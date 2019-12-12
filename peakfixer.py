@@ -10,7 +10,6 @@ from tkinter import Tk, filedialog, messagebox
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from sklearn import preprocessing as pp
 
 spectra = []
 
@@ -294,7 +293,7 @@ class Spectrum(object):
 
         return self._orig.copy()
 
-    def set_data_from_spectrum(self,source):
+    def set_data_from_spectrum(self, source):
         self._data = source
         self.min, self.max = self._data.min(0)['wavenumber'], self._data.max(0)['wavenumber']
 
@@ -455,6 +454,16 @@ class Spectrum(object):
             print(dt.now().time(), 'unable to plot. not enough memory. try spectrum.plot(n) where n is smaller than before.')
         return fig
 
+    def save_spectrum(self, file_path=None, silenced = True):
+        if file_path is None:
+            if not silenced:
+                root.deiconify()
+            file_path = filedialog.asksaveasfilename(title='Save As')
+
+        extension=file_path[file_path.rfind('.'):]
+        if extension =='.dpt':
+            self.get_data().to_csv(file_path,sep='\t',columns=self.cols, index=False, header=False)
+
 
 class SpectrumPair(object):
     def __init__(self, primary, secondary, name=None):
@@ -477,77 +486,7 @@ class SpectrumPair(object):
         self.reconciled = False
         self.combined = None
 
-    def interpolate_spectra(self):
-        if not self.reconciled:
-            self.reconcile_x()
-        print(dt.now().time(), 'interpolating', self.primary.name)
-        # self.primary.set_data_from_spectrum(self.primary.get_data().interpolate('index', inplace=False))
-        self.primary.set_data_from_spectrum(self.primary.get_data().interpolate('polynomial', inplace=False, order=2, limit_area='inside')) # test version
-        print(dt.now().time(), 'interpolating', self.secondary.name)
-        # self.secondary.set_data_from_spectrum(self.secondary.get_data().interpolate('index', inplace=False))
-        self.secondary.set_data_from_spectrum(self.secondary.get_data().interpolate('polynomial', inplace=False, order=2, limit_area='inside')) # test version
-        self.primary.normalize_spectrum()
-        self.secondary.normalize_spectrum()
-
-    def reconcile_x(self):
-        print(dt.now().time(), 'setting up for reconciliation...')
-        self.secondary.trim(self.min, self.max)
-        pri = self.primary.get_data()
-        sec = self.secondary.get_data()
-        pri['intensity'] = np.nan
-        sec['intensity'] = np.nan
-        print(dt.now().time(), 'appending...')
-        primary_base = self.primary.get_data().append(sec)
-        secondary_base = self.secondary.get_data().append(pri)
-        del pri, sec
-
-        print(dt.now().time(), 'sorting primary spectrum...')
-        primary_base.sort_values(by='wavenumber', kind='quicksort', inplace=True)
-        print(dt.now().time(), 'sorting secondary spectrum...')
-        secondary_base.sort_values(by='wavenumber', kind='quicksort', inplace=True)
-        # print(dt.now().time(), 'dropping duplicates from primary spectrum...')
-        # primary_base.drop_duplicates(inplace=False, subset='wavenumber')
-        # print(dt.now().time(), 'dropping duplicates from secondary spectrum...')
-        # secondary_base.drop_duplicates(inplace=False, subset='wavenumber')
-        print(dt.now().time(), 'setting values...')
-        self.primary.set_data_from_spectrum(primary_base)
-        self.secondary.set_data_from_spectrum(secondary_base)
-        print(dt.now().time(), 'reconciliation complete.')
-        self.reconciled = True
-
-    def remove_secondary(self, scale=1.0):
-        print(dt.now().time(), 'finding peaks...')
-        self.primary.normalize_spectrum()
-        self.secondary.trim(self.min,self.max)
-        self.secondary.normalize_spectrum(0, scale)
-        sec_peaks = self.secondary.get_peak_tuples()[:10] # remove slicer
-        data = self.primary.get_data()
-        print(dt.now().time(), 'calculating gaussian curves...')
-
-        temp = [[[data.index[index], gauss(x_val, (peak[1]['upper_bound'] - peak[1]['lower_bound']) / 6, peak[1]['intensity'], peak[1]['peak'])]
-                for index, x_val in zip(
-                data[(data.wavenumber >= peak[1]['lower_bound']) & (data.wavenumber <= peak[1]['upper_bound'])].index,
-                data[(data.wavenumber >= peak[1]['lower_bound']) & (data.wavenumber <= peak[1]['upper_bound'])].wavenumber)]
-                for peak in sec_peaks.iterrows()]
-        print(dt.now().time(), 'transposing...')
-
-        temp = np.vstack(temp).transpose()
-        print(dt.now().time(), 'processing gaussian data...')
-        temp = pd.DataFrame(temp[1], temp[0], columns=['intensity'])
-        # insert line which sums intensity of temp rows with duplicate index
-        self.inspect = temp
-        print(dt.now().time(), 'removing secondary peaks...')
-        data['intensity'] = data['intensity'] - temp['intensity']
-        data.fillna(self.primary.get_data()['intensity'])
-        print(dt.now().time(), 'done subtracting.')
-        self.combined = data
-        return data
-
-    def zero(self, data, row):
-        data.intensity[(data.wavenumber > row.lower_bound) & (data.wavenumber < row.upper_bound)] = 0
-        return None
-
-    def simple_remove_secondary(self, scale = 1.0, peak_width = 0.08, intensity_threshold=0.001):
+    def remove_secondary(self, scale = 1.0, peak_width = 0.04, intensity_threshold=0.0, **kwargs):
 
         print(dt.now().time(), 'normalizing...')
         self.primary.normalize_spectrum()
@@ -567,13 +506,13 @@ class SpectrumPair(object):
         base = self.primary.determine_baseline()
         baseline = base.mean()
         basestd=base.std()
-        noise = pd.Series(np.random.normal(baseline,basestd/5.0),data.index)
+        noise = pd.Series(np.random.normal(baseline,basestd/4),data.index)
 
         arrPeaks = list(np.asarray(secPeaks).transpose((1, 0)))
 
         print(dt.now().time(), 'preparing to generate gaussians...')
-        gauss_peaks_locations = [data.copy()[(data.wavenumber >= wavenumber - peak_width) & (
-                    data.wavenumber <= wavenumber + peak_width)] for wavenumber, intensity in zip(*arrPeaks)]
+        gauss_peaks_locations = [data.copy()[(data.wavenumber >= wavenumber - std) & (
+                    data.wavenumber <= wavenumber + std)] for wavenumber, intensity in zip(*arrPeaks)]
         print(dt.now().time(), 'generating gaussians...')
         gauss_peaks_intensity = [gauss.apply(df_gauss, axis=1, args=(std, intensity * scale, wavenumber))
                                  for gauss, wavenumber, intensity in zip(gauss_peaks_locations, *arrPeaks)]
@@ -589,50 +528,13 @@ class SpectrumPair(object):
         base = self.primary.determine_baseline()
         baseline = base.mean()
         minbaseline = baseline.dropna().index.min()
-        data.intensity -= baseline
-        data.intensity[data.intensity < noise] = noise
+        #data.intensity -= baseline
+        data.intensity[data.intensity < (noise-0.1)] = noise
         data.intensity[data.intensity > 1] = noise
         data = data[data.index > minbaseline]
         self.primary.set_data_from_spectrum(data)
 
         #self.primary.normalize_spectrum(0,1)
-
-    def subtract_spectrum(self, scale=1):
-        print(dt.now().time(), 'beginning subtraction...')
-        # just does the bare minimum of subtracting a scaled version of the second spectrum
-        if self.reconciled:
-            print(dt.now().time(), 'normalizing...')
-            self.primary.normalize_spectrum()
-            pair.secondary.trim(self.min,self.max)
-            self.secondary.normalize_spectrum(0,scale)
-            sub = pd.DataFrame(columns=['wavenumber', 'intensity'])
-            sub['wavenumber'] = self.primary.get_data()['wavenumber']
-            print(dt.now().time(), 'subtracting...')
-            # chunk it
-            done = False
-            divisor = 1
-            while not done:
-                print(dt.now().time(), 'divisor is', divisor)
-                try:
-                    sub_chunks = chunker(sub, divisor)
-                    sec_chunks = chunker(self.secondary.get_data(), divisor)
-                    for i in range(len(sub_chunks)):
-                        sub_chunks[i]['intensity'] = sub_chunks[i].subtract(sec_chunks[i])['intensity']
-                    fname = saver(sub_chunks)
-                    done = True
-                except MemoryError:
-                    print(dt.now().time(), 'failed. increasing divisor...')
-                    divisor += 1
-            del sub
-            sub = retrieve_from_saver(fname)
-            self.combined = Spectrum(self.primary.name+' - '+self.secondary.name)
-            self.combined.set_data_from_spectrum(sub)
-            return self.combined.get_data()
-
-        else:
-            print(dt.now().time(), 'not reconciled. reconciling...')
-            self.reconcile_x()
-            self.subtract_spectrum() # currently broken
 
     def plot(self,num_points = None):
         if self.combined is not None:
@@ -640,67 +542,66 @@ class SpectrumPair(object):
         self.primary.plot(num_points)
         self.secondary.plot(num_points)
 
-    def easy_subtract_and_plot(self, num_points = None):
-        # TODO: plot both spectra
-        primary_plot = self.primary.plot(num_points)
-        self.secondary.plot(num_points)
-        # TODO: pick which peak to use to normalize spectrum to be subtracted
-
-        # TODO: plot combined spectrum
+    def subtract_and_plot(self, **kwargs):
+        self.remove_secondary(**kwargs)
+        self.plot(**kwargs)
 
     def save_spectrum(self, file_path=None, silenced = True):
-        if file_path is None:
-            if not silenced:
-                root.deiconify()
-            file_path = filedialog.asksaveasfilename(title='Save As')
-
-        extension=file_path[file_path.rfind('.'):]
-        if extension =='.dpt':
-            self.primary.get_data().to_csv(file_path,sep='\t',columns=self.primary.cols, index=False, header=False)
-
-        # TODO: select which to save
-        # TODO: select filetype from list
-        # TODO: input filename
-        # TODO: save spectrum
+        self.primary.save_spectrum(file_path,silenced)
 
 
 gc.enable()
 root = Tk()
 root.withdraw()
 # temporary stuff
-path = './'
-test = Spectrum('test')
-#test.select_data_from_file(path+'GA_0.031torr_72M_10X_600LPF_337.95K_02-09-19_11.12_Emission back parallel input_Si Bolometer [External Pos.5]_0.000960_80 kHz_6 micron Mylar_BEB_AVG201.dpt',False,True)
-isotope_mods = {
-    1: 1,
-    2: 1,
-    3: 1,
-    4: 1e5,
-    5: 1e5,
-    6: 1e5,
-    7: 1e5
-}
+if __name__ == '__main__':
+    path = './'
+    test = Spectrum('test')
+    isotope_mods = {
+        1: 1,
+        2: 1,
+        3: 1,
+        4: 1e4,
+        5: 1e4,
+        6: 1e4,
+        7: 1e4
+    }
+    isotope_mods_hcl = {
+        1: 1,
+        2: 1,
+        3: 1e4,
+        4: 1e4,
+    }
+    test.select_data_from_file(path+'high-DVA_Av2_w_BKG500_cal.dpt',False,True)
+    real = Spectrum('simulation')
+    real.select_data_from_file(path+'syn-DVA.dpt', False,True)
+    water = Spectrum('water')
+    water.select_data_from_file(path+'5df03339.par', silenced=True, id_mods=isotope_mods)
+    hcl = Spectrum('HCl-DCl')
+    hcl.select_data_from_file(path+'hcldcl.par', silenced=True, id_mods=isotope_mods_hcl)
+    hcl.trim(90, 600)
+    water2 = water
+    test.trim(90, 600)
+    real.trim(90, 600)
+    water.trim(test.min, test.max)
+    hcl.normalize_spectrum()
+    test.normalize_spectrum()
+    water.normalize_spectrum()
+    real.normalize_spectrum()
+    pair = SpectrumPair(test, water, 'Combined Spectrum')
 
-test.select_data_from_file(path+'high-DVA_Av2_w_BKG500_cal.dpt',False,True)
-real = Spectrum('simulation')
-real.select_data_from_file(path+'syn-DVA.dpt', False,True)
-water = Spectrum('water')
-water.select_data_from_file(path+'5df03339.par', silenced=True, id_mods=isotope_mods)
-water2=water
-test.trim(90, 600)
-real.trim(90, 600)
-water.trim(test.min, test.max)
-test.normalize_spectrum()
-water.normalize_spectrum()
-real.normalize_spectrum()
-pair = SpectrumPair(test, water, 'Combined Spectrum')
+    pair.plot()
+    real.plot()
 
-pair.plot()
-real.plot()
-
-mag, width, thresh = 1e6, 0.04, 0.0
-pair.simple_remove_secondary(mag, width, thresh)
-title='./spectrum_mag{}_width{}_thresh{}.dpt'.format(mag, width, thresh)
-print('saving spectrum as', title)
-pair.save_spectrum(title)
-pair.plot()
+    mag, width, thresh = 1e4, 0.035, 1e-10
+    hclmag, hclwidth = 5e2, 0.02
+    pair.remove_secondary(mag, width, thresh)
+    pair2 = SpectrumPair(pair.primary, hcl, 'HCl-DCl Included')
+    pair2.remove_secondary(hclmag, width, thresh)
+    title = './spectrum_mag{}_width{}_thresh{}.dpt'.format(mag, width, thresh)
+    title2 = './spectrum_rem_hcl_dcl_mag{}_width{}_water_mag{}_width{}_thresh{}.dpt'.format(hclmag, mag, hclwidth, width, thresh)
+    print('saving spectrum as', title)
+    pair.save_spectrum(title)
+    pair2.save_spectrum(title2)
+    pair.plot()
+    pair2.plot()
