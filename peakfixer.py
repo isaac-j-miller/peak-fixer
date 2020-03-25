@@ -452,10 +452,10 @@ class SpectrumPair(object):
         noise = pd.Series(np.random.normal(baseline,basestd/4),data.index)
 
         arrPeaks = list(np.asarray(secPeaks).transpose((1, 0)))
-
+        three_std=peak_width*1.5
         print(dt.now().time(), 'preparing to generate gaussians...')
-        gauss_peaks_locations = [data.copy()[(data.wavenumber >= wavenumber - std) & (
-                    data.wavenumber <= wavenumber + std)] for wavenumber, intensity in zip(*arrPeaks)]
+        gauss_peaks_locations = [data.copy()[(data.wavenumber >= wavenumber - three_std) & (
+                    data.wavenumber <= wavenumber + three_std)] for wavenumber, intensity in zip(*arrPeaks)]
         print(dt.now().time(), 'generating gaussians...')
         gauss_peaks_intensity = [gauss.apply(df_gauss, axis=1, args=(std, intensity * scale, wavenumber))
                                  for gauss, wavenumber, intensity in zip(gauss_peaks_locations, *arrPeaks)]
@@ -491,4 +491,3 @@ class SpectrumPair(object):
 
     def save_spectrum(self, file_path=None, silenced = True):
         self.primary.save_spectrum(file_path,silenced)
-
