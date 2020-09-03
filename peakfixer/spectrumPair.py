@@ -77,7 +77,7 @@ class SpectrumPair(object):
             primary.set_data_from_spectrum(data)
             return SpectrumPair(primary, self.secondary,self.name+'(SECONDARY REMOVED)')
 
-    def subtractSecondarySpectrumWithMatchingIndex(self, relative_scale=1, fill_negative=False, in_place=True):
+    def subtract_secondary_spectrum_with_matching_index(self, relative_scale=1, fill_negative=False, in_place=True):
         self.primary.normalize_spectrum()
         self.secondary.normalize_spectrum(0,relative_scale)
         combined = self.primary.get_data()
