@@ -7,7 +7,7 @@ min_wavelength=187.0  # cm-1
 max_wavelength=215.0  # cm-1
 medium='vacuum'  # other option is 'air'
 gas_temperature=337.95  # K
-water_partial_pressure=0.000000008 #I'm not actually sure if this is the water's partial pressure or the overall pressure, 
+water_partial_pressure=0.000000008 #bar. I'm not actually sure if this is the water's partial pressure or the overall pressure, 
 #but the peaks are WAY too broad if I use the overall pressure, so I assume it is the partial pressure
 isotopologues = {
     1:0.9978, 
