@@ -89,6 +89,7 @@ class SpectrumPair(object):
         tempCombined['wavenumber']=tempCombined.index
         tempSpectrum1.set_data_from_spectrum(tempCombined)
         base = tempSpectrum1.determine_baseline()
+        secondary[secondary['intensity']<0]['intensity'] = 0.0
         combined['intensity'] = combined['intensity']-secondary['intensity']
         combined['wavenumber'] =combined.index
         combined=combined.reindex()
