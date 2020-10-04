@@ -84,12 +84,17 @@ class SpectrumPair(object):
         secondary = self.secondary.get_data()
         combined = combined.set_index('wavenumber')
         secondary = secondary.set_index('wavenumber')
+        oldSpectrum = self.primary.get_data()
+        oldSpectrum = oldSpectrum.set_index('wavenumber')
         tempSpectrum1 = Spectrum('TEMP')
         tempCombined = combined
         tempCombined['wavenumber']=tempCombined.index
         tempSpectrum1.set_data_from_spectrum(tempCombined)
         base = tempSpectrum1.determine_baseline()
         secondary[secondary['intensity']<0]['intensity'] = 0.0
+        nonZeroIntensity = oldSpectrum['intensity']
+        nonZeroIntensity[nonZeroIntensity<0.0] = combined['intensity']
+        combined[combined['intensity']>oldSpectrum['intensity']]['intensity'] = nonZeroIntensity
         combined['intensity'] = combined['intensity']-secondary['intensity']
         combined['wavenumber'] =combined.index
         combined=combined.reindex()
@@ -100,7 +105,7 @@ class SpectrumPair(object):
             basestd=base.std()
             noise = pd.Series(np.random.normal(baseline,basestd/4),combined.index)
             minbaseline = baseline.dropna().index.min()
-            combined.intensity[combined.intensity < noise] = noise
+            combined.intensity[combined.intensity < (0-abs(noise/2))] = noise
             combined = combined[combined.index > minbaseline]
         tempSpectrum = Spectrum(self.name + ' (SECONDARY REMOVED)')
         tempSpectrum.set_data_from_spectrum(combined)
