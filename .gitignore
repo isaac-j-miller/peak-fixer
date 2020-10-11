@@ -6,4 +6,10 @@
 *.JMU
 *.jmu
 *.iml
+generate_hapi.py
+peak_fixed_remove_water.py
+/fixed
+/unfixed
+/venv
+/.vscode
 

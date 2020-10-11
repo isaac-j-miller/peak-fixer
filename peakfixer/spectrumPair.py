@@ -78,7 +78,7 @@ class SpectrumPair(object):
             return SpectrumPair(primary, self.secondary,self.name+'(SECONDARY REMOVED)')
 
     def subtract_secondary_spectrum_with_matching_index(self, relative_scale=1, fill_negative=False, in_place=True):
-        self.primary.normalize_spectrum()
+        self.primary.normalize_spectrum(0,1)
         self.secondary.normalize_spectrum(0,relative_scale)
         combined = self.primary.get_data()
         secondary = self.secondary.get_data()
@@ -96,6 +96,7 @@ class SpectrumPair(object):
         nonZeroIntensity[nonZeroIntensity<0.0] = combined['intensity']
         combined[combined['intensity']>oldSpectrum['intensity']]['intensity'] = nonZeroIntensity
         combined['intensity'] = combined['intensity']-secondary['intensity']
+        combined[combined['intensity']>oldSpectrum['intensity']]['intensity'] = nonZeroIntensity
         combined['wavenumber'] =combined.index
         combined=combined.reindex()
         
